@@ -2,7 +2,7 @@
 ![Docker](https://github.com/f1tenth/f1tenth_gym/actions/workflows/docker.yml/badge.svg)
 # The F1TENTH Gym environment
 
-This is the repository of the F1TENTH Gym environment.
+This is the repository of the F1TENTH Gym environment. These are USFQ modifications for training with DRL.  
 
 This project is still under heavy developement.
 
