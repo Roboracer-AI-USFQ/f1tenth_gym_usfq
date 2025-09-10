@@ -90,5 +90,7 @@ class CrossQCritic(TwinQCritic):
 
 
     def forward(self, state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        action = action.float()
         x = torch.cat([state, action], dim=1)
+        # print(f"state dtype: {state.dtype}, action dtype: {action.dtype}")
         return self.q1(x), self.q2(x)

@@ -101,7 +101,7 @@ class CrossQSAC_Agent(Base_Agent):
 
         if use_wandb:  # TODO: this should be in the main file
             wandb.init(
-                project="crossq_project",  # set this from config file
+                project="f1tenth_usfq",  # set this from config file
                 config={
                     "actor_hidden_layers": actor_hidden_layers,
                     "critic_hidden_layers": critic_hidden_layers,
@@ -142,22 +142,41 @@ class CrossQSAC_Agent(Base_Agent):
         for _ in range(episodes):
             # print("====================================")
             # print("Rollout step ", _)
-            state, _ = self.env.reset(np.array([[0.7, 0, 1.37]]))  # TODO: make seed a parameter
+            state, reward, terminated, info = self.env.reset(np.array([[0.7, 0, 1.37]]))  # TODO: make seed a parameter
             termination = False
             truncation = False
+
+            state = np.concatenate([
+            state['scans'][0].flatten(),
+            np.array(state['poses_x']),
+            np.array(state['poses_y']),
+            np.array(state['poses_theta']),
+            np.array(state['linear_vels_x']),
+            np.array(state['linear_vels_y']),
+            np.array(state['ang_vels_z'])
+            ])
 
             total_ep_reward = 0
             steps = 0
             while (not termination) and (not truncation):
                 action = self.select_action(state, train)
-                next_state, reward, termination, truncation, infos = self.env.step(
-                    action
+                next_state, reward, termination, infos = self.env.step(
+                    np.array([action])
                 )
                 # print(reward)
                 # if self.use_wandb:
                 #     wandb.log({
                 #         "rollout/reward_per_step": reward
                 #     })
+                next_state = np.concatenate([
+                next_state['scans'][0].flatten(),
+                np.array(next_state['poses_x']),
+                np.array(next_state['poses_y']),
+                np.array(next_state['poses_theta']),
+                np.array(next_state['linear_vels_x']),
+                np.array(next_state['linear_vels_y']),
+                np.array(next_state['ang_vels_z'])
+                ])
                 self.replay_buffer.add(
                     state, action, reward, next_state, termination, truncation
                 )
@@ -165,7 +184,7 @@ class CrossQSAC_Agent(Base_Agent):
                 steps += 1
                 total_ep_reward += reward
 
-            # print(f"Episode finished in {steps} steps with Average Reward = {total_ep_reward:.2f}")
+            print(f"Episode finished in {steps} steps with Average Reward = {total_ep_reward:.2f}")
             if self.use_wandb:
                 wandb.log(
                     {
@@ -200,7 +219,7 @@ class CrossQSAC_Agent(Base_Agent):
                 )
                 states = torch.FloatTensor(states).to(self.device)
                 next_states = torch.FloatTensor(next_states).to(self.device)
-                actions = torch.FloatTensor(actions).to(self.device)
+                actions = torch.tensor(actions, dtype=torch.float32, device=self.device)
                 rewards = torch.FloatTensor(rewards).to(self.device)
                 terminations = torch.FloatTensor(terminations).to(self.device)
                 truncations = torch.FloatTensor(truncations).to(self.device)
