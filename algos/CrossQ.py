@@ -5,6 +5,7 @@ import torch.optim as optim
 import numpy as np
 from networks.actors import CrossQ_SAC_Actor, Deterministic_Actor
 from networks.critics import CrossQCritic
+from networks.encoders import CNNEncoder
 from algos.agent_utils import Base_Agent
 from utils.buffers import SimpleBuffer
 from typing import List
@@ -17,6 +18,8 @@ import wandb
 # wandb.init(sync_tensorboard=True)
 # wandb.tensorboard.patch(root_logdir="logs")
 log_dir = "logs"  # TODO: change this later to work with config
+
+# TODO: Implement the encoder as a method of the actor, it is evaluated in the forward of the actor.
 
 
 # ------| Stuffs to do |-------
@@ -33,6 +36,7 @@ class CrossQSAC_Agent(Base_Agent):
         env: gym.Env,
         state_dim: int = None,
         action_dim: int = None,
+        encoder: CNNEncoder = None,
         actor_hidden_layers: List[int] = [512, 512],
         critic_hidden_layers: List[int] = [512, 512],
         actor_lr: float = 0.0003,
@@ -60,7 +64,7 @@ class CrossQSAC_Agent(Base_Agent):
         # initialize the actor and critic networks
         # - send high and low action values as parameters instead of the env
         self.actor = CrossQ_SAC_Actor(
-            state_dim, action_dim, env=env, hidden_sizes=actor_hidden_layers
+            state_dim, action_dim, env=env, hidden_sizes=actor_hidden_layers, encoder=encoder
         ).to(self.device)
 
         self.critic = CrossQCritic(

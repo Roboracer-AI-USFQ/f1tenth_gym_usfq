@@ -5,6 +5,7 @@ import gym
 from utils.utils import BatchRenorm, SquashedNormal
 from typing import List, Tuple
 import numpy as np
+from networks.encoders import CNNEncoder
 class BaseActor(nn.Module, ABC):
     def __init__(self):
         super(BaseActor, self).__init__()
@@ -36,6 +37,7 @@ class CrossQ_SAC_Actor(BaseActor):
                 action_dim: int,
                 env: gym.Env,
                 hidden_sizes: List[int]=[256, 256],
+                encoder: CNNEncoder = None,
                 log_std_bounds: List[float] =[-20.0, 2.0]):
         super().__init__()
         momentum = 0.01
@@ -66,6 +68,8 @@ class CrossQ_SAC_Actor(BaseActor):
                 nn.init.zeros_(layer.bias)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        #TODO: first preprocess the lidar data, and then evaluate in the forward. 
+        #TODO: check for the changes in the input dim in the actor.  
         x = self.actor_net(state)
         mean = self.mean(x)
         log_std = self.log_std(x)
@@ -116,6 +120,14 @@ class CrossQ_SAC_Actor(BaseActor):
         
         return action, log_prob, mean_action
     
+    def lidar_preprocess(self, lidar):
+        #TODO: Separations of the lidar and robot position, velocity and waypoint. Possible it will have temporal informartion.
+        #TODO: Reduce lidar information by its half. 
+        # Normalize lidar data to be between -1 and 1
+        lidar_min = 0.0  # Minimum possible value of lidar
+        lidar_max = 10.0  # Maximum possible value of lidar
+        lidar = 2.0 * (lidar - lidar_min) / (lidar_max - lidar_min) - 1.0
+        return lidar
     
 # sorry gabriel, deleted it on accident
 class Deterministic_Actor(BaseActor):
