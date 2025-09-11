@@ -280,9 +280,23 @@ def main():
 
     while not done:
         speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
+        print(steer, speed)
         obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
+        # print(obs)
+        state = np.concatenate([
+            obs['scans'][0].flatten(),
+            np.array(obs['poses_x']),
+            np.array(obs['poses_y']),
+            np.array(obs['poses_theta']),
+            np.array(obs['linear_vels_x']),
+            np.array(obs['linear_vels_y']),
+            np.array(obs['ang_vels_z'])
+        ])
+        # print('State:', state.shape)
         laptime += step_reward
         env.render(mode='human')
+
+        
         
     print('Sim elapsed time:', laptime, 'Real elapsed time:', time.time()-start)
 
