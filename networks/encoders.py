@@ -37,8 +37,8 @@ class CNNEncoder(Encoder):
     def __init__(
         self,
         input_dim,
-        num_layers=2,
-        hidden_size=512,
+        num_layers=5,
+        hidden_size=[512, 256, 128, 64, 32],
         history_length=1,
         concat_action=False,
         dropout=0.0,):
@@ -50,16 +50,20 @@ class CNNEncoder(Encoder):
             concat_action=concat_action,
             dropout=dropout,
         )
-        print(self.feature_dim)
-        #print(input_dim)
+        assert num_layers == len(hidden_size), "num_layers should be equal to the length of hidden_size"
+
+        print("Input shape:", input_dim)
+
         layers = []
         if num_layers > 1:
             for i in range(num_layers - 1):
-                input_channel = hidden_size if i > 0 else input_dim[0]
+                input_channel = hidden_size[i-1] if i > 0 else input_dim[1]
+                print("Input channel:", input_channel)
+                print("Output channel:", hidden_size[i])
                 layers.append(
                     nn.Conv1d(
                         in_channels=input_channel,
-                        out_channels=hidden_size,
+                        out_channels=hidden_size[i],
                         kernel_size=3,
                         padding=1,
                     )
@@ -69,8 +73,8 @@ class CNNEncoder(Encoder):
             layers.extend(
                 [
                     nn.Conv1d(
-                        in_channels=hidden_size,
-                        out_channels=hidden_size,
+                        in_channels=hidden_size[-2],
+                        out_channels=hidden_size[-1],
                         kernel_size=history_length,
                         padding=0,
                     ),
@@ -91,6 +95,7 @@ class CNNEncoder(Encoder):
             )
 
         self.net = nn.Sequential(*layers)
+        print(self.net)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)  # [batch, state_dim, seq_len]
