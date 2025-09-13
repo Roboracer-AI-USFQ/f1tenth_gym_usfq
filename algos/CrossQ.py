@@ -51,7 +51,7 @@ class CrossQSAC_Agent(Base_Agent):
         super().__init__(env, replay_buffer)
 
         self.env = env
-        self.initial_training_steps = 20  # TODO verify if these are steps or episodes
+        self.initial_training_steps = 20  # Epsiodes, no steps
         self.training_steps_per_rollout = 1
         self.use_wandb = use_wandb
         # state_dim = env.observation_space.shape[0]
