@@ -42,3 +42,12 @@ optim_method: "CMA"
 
 # seed
 seed: 12345
+
+# Encoder args\
+encoder:
+  input_dim: [4, 1080]  # (temporal info, lidar scans)
+  num_layers: 5
+  hidden_size: [512, 256, 128, 64, 32]
+  history_length: 4
+  concat_action: False
+  dropout: 0.0

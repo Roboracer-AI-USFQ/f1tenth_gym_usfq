@@ -43,6 +43,8 @@ class CrossQ_SAC_Actor(BaseActor):
         momentum = 0.01
         self.log_min, self.log_max = log_std_bounds
 
+        self.encoder = encoder
+
         self.actor_net = nn.Sequential(
             BatchRenorm(state_dim, momentum=momentum),
             nn.Linear(state_dim, hidden_sizes[0]),
@@ -69,7 +71,23 @@ class CrossQ_SAC_Actor(BaseActor):
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         #TODO: first preprocess the lidar data, and then evaluate in the forward. 
-        #TODO: check for the changes in the input dim in the actor.  
+        #TODO: check for the changes in the input dim in the actor. 
+        
+        # Single observation shape: [lidar(1080), x, y, v_x, v_y, waypoint_x, waypoint_y] -> [1086]
+        # State shape: [batch, time (4), 1086]
+        # Separate lidar data and the last 6 features (robot state information)
+        lidar = state[..., :1080]
+        robot_info = state[..., -6:]
+
+        # Preprocess lidar data
+        for i in range(lidar.shape[1]):
+            lidar[i] = self.lidar_preprocess(lidar[i])
+
+        lidar_encoded = self.encoder(lidar)  # Encode lidar data
+
+        # Concatenate the processed lidar with the robot information
+        state = torch.cat([lidar_encoded, robot_info], dim=-1)
+
         x = self.actor_net(state)
         mean = self.mean(x)
         log_std = self.log_std(x)
@@ -123,9 +141,12 @@ class CrossQ_SAC_Actor(BaseActor):
     def lidar_preprocess(self, lidar):
         #TODO: Separations of the lidar and robot position, velocity and waypoint. Possible it will have temporal informartion.
         #TODO: Reduce lidar information by its half. 
+        
         # Normalize lidar data to be between -1 and 1
-        lidar_min = 0.0  # Minimum possible value of lidar
-        lidar_max = 10.0  # Maximum possible value of lidar
+        lidar_min = 0.0  
+        lidar_max = 5.0 
+        if torch.isnan(lidar).any():
+            lidar[torch.isnan(lidar)] = lidar_max
         lidar = 2.0 * (lidar - lidar_min) / (lidar_max - lidar_min) - 1.0
         return lidar
     
