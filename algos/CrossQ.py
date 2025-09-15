@@ -9,7 +9,12 @@ from algos.agent_utils import Base_Agent
 from utils.buffers import SimpleBuffer
 from typing import List
 import copy
-import gym
+try:
+    import gymnasium as gym
+    from gymnasium import Env
+except ImportError:
+    import gym
+    from gym import Env
 
 from tensorboardX import SummaryWriter
 import wandb
@@ -30,7 +35,7 @@ class CrossQSAC_Agent(Base_Agent):
 
     def __init__(
         self,
-        env: gym.Env,
+        env: Env,
         state_dim: int = None,
         action_dim: int = None,
         actor_hidden_layers: List[int] = [512, 512],
@@ -70,7 +75,11 @@ class CrossQSAC_Agent(Base_Agent):
             activation="relu6",
         ).to(self.device)
         # params
-        self.max_action = np.array([env.params["sv_max"], env.params["v_max"]])
+        # Access underlying environment if wrapped
+        underlying_env = env
+        while hasattr(underlying_env, 'env'):
+            underlying_env = underlying_env.env
+        self.max_action = np.array([underlying_env.params["sv_max"], underlying_env.params["v_max"]])
         self.gamma = gamma
         self.rewards_scale = 1.0
         self.policy_update_freq = policy_freq
@@ -140,45 +149,56 @@ class CrossQSAC_Agent(Base_Agent):
         """
         # Run policy in environment
         for _ in range(episodes):
-            # print("====================================")
-            # print("Rollout step ", _)
-            state, reward, terminated, info = self.env.reset(np.array([[0.7, 0, 1.37]]))  # TODO: make seed a parameter
-            termination = False
-            truncation = False
+            state, info = self.env.reset()  # gymnasium format
+            terminated = False
+            truncated = False
 
             state = np.concatenate([
-            state['scans'][0].flatten(),
-            np.array(state['poses_x']),
-            np.array(state['poses_y']),
-            np.array(state['poses_theta']),
-            np.array(state['linear_vels_x']),
-            np.array(state['linear_vels_y']),
-            np.array(state['ang_vels_z'])
+                state['scans'][0].flatten(),
+                np.array(state['poses_x']),
+                np.array(state['poses_y']),
+                np.array(state['poses_theta']),
+                np.array(state['linear_vels_x']),
+                np.array(state['linear_vels_y']),
+                np.array(state['ang_vels_z'])
             ])
 
             total_ep_reward = 0
             steps = 0
-            while (not termination) and (not truncation):
+            while not terminated and not truncated:
+                if np.isnan(state).any():
+                    print("NaN detected in state at the beginning of the loop")
+                    print("State:", state)
+                    break
                 action = self.select_action(state, train)
-                next_state, reward, termination, infos = self.env.step(
+                next_state, reward, terminated, truncated, infos = self.env.step(
                     np.array([action])
                 )
-                # print(reward)
-                # if self.use_wandb:
-                #     wandb.log({
-                #         "rollout/reward_per_step": reward
-                #     })
+                
+                # Log reward components if available
+                if self.use_wandb and 'reward_components' in infos:
+                    reward_components = infos['reward_components']
+                    wandb.log({
+                        "reward/total": reward_components.get('total', reward),
+                        "reward/progress": reward_components.get('progress', 0),
+                        "reward/speed": reward_components.get('speed', 0),
+                        "reward/centerline": reward_components.get('centerline', 0),
+                        "reward/smoothness": reward_components.get('smoothness', 0),
+                        "reward/inactivity": reward_components.get('inactivity', 0),
+                        "reward/collision": reward_components.get('collision', 0)
+                    })
+
                 next_state = np.concatenate([
-                next_state['scans'][0].flatten(),
-                np.array(next_state['poses_x']),
-                np.array(next_state['poses_y']),
-                np.array(next_state['poses_theta']),
-                np.array(next_state['linear_vels_x']),
-                np.array(next_state['linear_vels_y']),
-                np.array(next_state['ang_vels_z'])
+                    next_state['scans'][0].flatten(),
+                    np.array(next_state['poses_x']),
+                    np.array(next_state['poses_y']),
+                    np.array(next_state['poses_theta']),
+                    np.array(next_state['linear_vels_x']),
+                    np.array(next_state['linear_vels_y']),
+                    np.array(next_state['ang_vels_z'])
                 ])
                 self.replay_buffer.add(
-                    state, action, reward, next_state, termination, truncation
+                    state, action, reward, next_state, terminated, truncated
                 )
                 state = next_state
                 steps += 1
@@ -202,6 +222,10 @@ class CrossQSAC_Agent(Base_Agent):
         """
 
         for global_step in range(total_steps):
+            
+            if global_step % 1000 == 0:
+                print(f"[train] global_step={global_step}, replay_size={len(self.replay_buffer)}", flush=True)
+            
             if self.use_wandb:
                 wandb.log({"Replay_buffer_lenght": len(self.replay_buffer)})
 
@@ -236,8 +260,7 @@ class CrossQSAC_Agent(Base_Agent):
 
                 q_values_1, q_values_1_next = torch.chunk(cat_q1, chunks=2, dim=0)
                 q_values_2, q_values_2_next = torch.chunk(cat_q2, chunks=2, dim=0)
-
-                # print(q_values_1)
+                
                 # print(q_values_1.detach().mean())
                 # print(q_values_2)
 
@@ -375,7 +398,7 @@ class CrossQTD3_Agent(Base_Agent):
 
     def __init__(
         self,
-        env: gym.Env,
+        env: Env,
         actor_hidden_layers: List[int] = [256, 256],
         critic_hidden_layers: List[int] = [256, 256],
         actor_lr: float = 3e-3,
@@ -417,7 +440,11 @@ class CrossQTD3_Agent(Base_Agent):
         self.target_actor.eval()
 
         # define parameters
-        self.max_action = env.action_space.high
+        # Access underlying environment if wrapped
+        underlying_env = env
+        while hasattr(underlying_env, 'env'):
+            underlying_env = underlying_env.env
+        self.max_action = underlying_env.action_space.high
         self.gamma = gamma
         self.tau = tau
         self.policy_noise = policy_noise

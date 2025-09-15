@@ -24,10 +24,15 @@
 Author: Hongrui Zheng
 '''
 
-# gym imports
-import gym
-from gym import error, spaces, utils
-from gym.utils import seeding
+# gym imports - using gymnasium for compatibility
+try:
+    import gymnasium as gym
+    from gymnasium import error, spaces, utils
+    from gymnasium.utils import seeding
+except ImportError:
+    import gym
+    from gym import error, spaces, utils
+    from gym.utils import seeding
 
 # base classes
 from f110_gym.envs.base_classes import Simulator, Integrator
@@ -36,6 +41,10 @@ from f110_gym.envs.base_classes import Simulator, Integrator
 import numpy as np
 import os
 import time
+import yaml
+
+# reward system
+from .reward_calculator import RewardCalculator
 
 # gl
 import pyglet
@@ -161,6 +170,33 @@ class F110Env(gym.Env):
         # radius to consider done
         self.start_thresh = 0.5  # 10cm
 
+        # Initialize reward calculator
+        try:
+            reward_config_path = kwargs.get('reward_config', './config/reward_config.yaml')
+            waypoints_path = kwargs.get('waypoints_path', './examples/example_waypoints.csv')
+            
+            # Load reward configuration
+            reward_config = None
+            if os.path.exists(reward_config_path):
+                with open(reward_config_path, 'r') as f:
+                    config_data = yaml.load(f, Loader=yaml.FullLoader)
+                    reward_config = config_data.get('reward_system', None)
+            
+            # Initialize reward calculator
+            self.reward_calculator = RewardCalculator(
+                waypoints_path=waypoints_path if os.path.exists(waypoints_path) else None,
+                reward_config=reward_config,
+                track_length=100.0
+            )
+            self.use_advanced_rewards = True
+            print("Advanced reward system initialized")
+            
+        except Exception as e:
+            print(f"Could not initialize advanced reward system: {e}")
+            print("Falling back to simple timestep reward")
+            self.reward_calculator = None
+            self.use_advanced_rewards = False
+
         # env states
         self.poses_x = []
         self.poses_y = []
@@ -191,6 +227,24 @@ class F110Env(gym.Env):
         # initiate stuff
         self.sim = Simulator(self.params, self.num_agents, self.seed, time_step=self.timestep, integrator=self.integrator, lidar_dist=self.lidar_dist)
         self.sim.set_map(self.map_path, self.map_ext)
+
+        # Define action and observation spaces for gymnasium compatibility
+        # Action space: [steering_velocity, longitudinal_velocity]
+        self.action_space = spaces.Box(
+            low=np.array([self.params['sv_min'], self.params['v_min']]),
+            high=np.array([self.params['sv_max'], self.params['v_max']]),
+            dtype=np.float32
+        )
+        
+        # Observation space: LiDAR scans (1080) + pose info (6) = 1086
+        # This matches the state_dim=1086 used in the RL agent
+        obs_dim = 1080 + 6  # LiDAR + [poses_x, poses_y, poses_theta, linear_vels_x, linear_vels_y, ang_vels_z]
+        self.observation_space = spaces.Box(
+            low=-np.inf,
+            high=np.inf,
+            shape=(obs_dim,),
+            dtype=np.float32
+        )
 
         # stateful observations for rendering
         self.render_obs = None
@@ -269,8 +323,9 @@ class F110Env(gym.Env):
 
         Returns:
             obs (dict): observation of the current step
-            reward (float, default=self.timestep): step reward, currently is physics timestep
-            done (bool): if the simulation is done
+            reward (float): step reward using advanced reward system
+            terminated (bool): if the simulation is done (gymnasium format)
+            truncated (bool): if the simulation was truncated (gymnasium format)  
             info (dict): auxillary information dictionary
         """
         
@@ -291,7 +346,6 @@ class F110Env(gym.Env):
             }
 
         # times
-        reward = self.timestep
         self.current_time = self.current_time + self.timestep
         
         # update data member
@@ -300,22 +354,48 @@ class F110Env(gym.Env):
         # check done
         done, toggle_list = self._check_done()
         info = {'checkpoint_done': toggle_list}
+        
+        # Calculate reward using advanced system or fallback to simple
+        if self.use_advanced_rewards and self.reward_calculator is not None:
+            reward, reward_components = self.reward_calculator.calculate_total_reward(
+                obs, action[0], done, info
+            )
+            # Add reward components to info for logging
+            info['reward_components'] = reward_components
+        else:
+            # Fallback to simple timestep reward
+            reward = self.timestep
+            info['reward_components'] = {'total': reward, 'timestep': reward}
 
-        return obs, reward, done, info
+        # Gymnasium format: obs, reward, terminated, truncated, info
+        terminated = done
+        truncated = False  # We don't have truncation in F1TENTH currently
+        return obs, reward, terminated, truncated, info
 
-    def reset(self, poses):
+    def reset(self, poses=None, seed=None, options=None):
         """
         Reset the gym environment by given poses
+        Compatible with both old gym and new gymnasium interfaces
 
         Args:
-            poses (np.ndarray (num_agents, 3)): poses to reset agents to
+            poses (np.ndarray (num_agents, 3), optional): poses to reset agents to
+            seed (int, optional): seed for random number generator (gymnasium compatibility)
+            options (dict, optional): additional options (gymnasium compatibility)
 
         Returns:
             obs (dict): observation of the current step
-            reward (float, default=self.timestep): step reward, currently is physics timestep
-            done (bool): if the simulation is done
-            info (dict): auxillary information dictionary
+            info (dict): auxillary information dictionary (gymnasium interface)
+            OR
+            obs, reward, done, info (old gym interface)
         """
+        # Handle different call signatures
+        if poses is None:
+            poses = np.array([[0.7, 0, 1.37]])  # Default starting pose
+        elif not hasattr(poses, 'shape'):
+            # First argument might be seed in gymnasium interface
+            if isinstance(poses, (int, type(None))):
+                seed = poses
+                poses = np.array([[0.7, 0, 1.37]])
         # reset counters and data members
         self.current_time = 0.0
         self.collisions = np.zeros((self.num_agents, ))
@@ -323,6 +403,10 @@ class F110Env(gym.Env):
         self.near_start = True
         self.near_starts = np.array([True]*self.num_agents)
         self.toggle_list = np.zeros((self.num_agents,))
+        
+        # Reset reward calculator for new episode
+        if self.use_advanced_rewards and self.reward_calculator is not None:
+            self.reward_calculator.reset_episode()
 
         # states after reset
         self.start_xs = poses[:, 0]
@@ -335,7 +419,7 @@ class F110Env(gym.Env):
 
         # get no input observations
         action = np.zeros((self.num_agents, 2))
-        obs, reward, done, info = self.step(action)
+        obs, reward, terminated, truncated, info = self.step(action)
 
         self.render_obs = {
             'ego_idx': obs['ego_idx'],
@@ -346,7 +430,9 @@ class F110Env(gym.Env):
             'lap_counts': obs['lap_counts']
             }
         
-        return obs, reward, done, info
+        # Gymnasium expects (obs, info), old gym expects (obs, reward, done, info)
+        # We'll return gymnasium format since we're using gymnasium
+        return obs, info
 
     def update_map(self, map_path, map_ext):
         """

@@ -1,0 +1,72 @@
+# Reward system configuration for F1TENTH RL Training
+# This file allows easy tuning of reward components without code changes
+
+reward_system:
+  # Weights for different reward components (should sum to ~1.0 for main components)
+  weights:
+    progress: 0.4        # Reward for forward progress along track
+    speed: 0.25          # Reward for maintaining optimal speed
+    centerline: 0.15     # Penalty for deviating from centerline
+    smoothness: 0.1      # Reward for smooth action transitions
+    inactivity: 0.1      # Penalty for moving too slowly or staying still
+  
+  # Large penalty values (not weighted)
+  penalties:
+    collision: -100.0    # Severe penalty for collisions
+    off_track: -50.0     # Penalty for going completely off track
+  
+  # Parameters for reward calculations
+  parameters:
+    target_speed: 8.0              # Target speed in m/s
+    speed_tolerance: 2.0           # Tolerance around target speed (m/s)
+    centerline_tolerance: 1.0      # Maximum deviation from centerline without penalty (meters)
+    inactivity_threshold: 0.5      # Minimum speed to avoid inactivity penalty (m/s)
+    action_smoothness_window: 5    # Number of actions to consider for smoothness
+    
+  # Track-specific parameters
+  track:
+    length: 100.0         # Approximate track length for progress calculation
+    
+# Waypoints configuration
+waypoints:
+  path: "./examples/example_waypoints.csv"  # Path to waypoints file
+  delimiter: ";"                            # CSV delimiter
+  skip_rows: 3                             # Rows to skip at beginning
+  x_column: 1                              # Column index for x coordinates
+  y_column: 2                              # Column index for y coordinates
+
+# Training phases with different reward emphasis
+# Useful for curriculum learning
+training_phases:
+  phase_1:  # Early training - focus on basic movement and collision avoidance
+    weights:
+      progress: 0.5
+      speed: 0.2
+      centerline: 0.1
+      smoothness: 0.05
+      inactivity: 0.15
+    parameters:
+      target_speed: 4.0
+      speed_tolerance: 3.0
+      
+  phase_2:  # Mid training - introduce speed and centerline requirements
+    weights:
+      progress: 0.4
+      speed: 0.3
+      centerline: 0.15
+      smoothness: 0.1
+      inactivity: 0.05
+    parameters:
+      target_speed: 6.0
+      speed_tolerance: 2.5
+      
+  phase_3:  # Advanced training - full reward system
+    weights:
+      progress: 0.4
+      speed: 0.25
+      centerline: 0.15
+      smoothness: 0.1
+      inactivity: 0.1
+    parameters:
+      target_speed: 8.0
+      speed_tolerance: 2.0

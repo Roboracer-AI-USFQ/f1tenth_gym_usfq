@@ -13,6 +13,8 @@ class StableTanhTransform(TanhTransform):
         return 0.5 * (x.log1p() - (-x).log1p())
 
     def _inverse(self, x):
+        # evitar log(0) cuando x ~ ±1
+        x = torch.clamp(x, -1 + 1e-6, 1 - 1e-6)
         return self.atanh(x)
 
     def __eq__(self, other):
@@ -21,8 +23,9 @@ class StableTanhTransform(TanhTransform):
 
 class SquashedNormal(TransformedDistribution):
     def __init__(self, loc: torch.Tensor, std: torch.Tensor):
-        self.loc = loc #can't use mean because of the property
+        self.loc = loc
         self.std = std
+        #base_distribution = Normal(loc, torch.clamp(std, 1e-4))
         base_distribution = Normal(loc, std)
         super().__init__(base_distribution, StableTanhTransform(), validate_args=False)
 
@@ -88,7 +91,7 @@ class BatchRenorm(nn.Module):
 
         dims = [i for i in range(x.dim()) if i != 1]  # [0, 2, 3]
 
-        running_std = (self.running_var + self.eps).sqrt()
+        running_std = (self.running_var.clamp(min=1e-6) + self.eps).sqrt()
 
         if self.training:
             mean = x.mean(dims)
@@ -111,7 +114,10 @@ class BatchRenorm(nn.Module):
                 view_shape
             ) + d.view(view_shape)
 
-            raw_var = var.detach() * x.shape[0] / (x.shape[0] - 1)
+            if x.shape[0] > 1:
+                raw_var = var.detach() * x.shape[0] / (x.shape[0] - 1)
+            else:
+                raw_var = var.detach()
             self.running_mean += self.momentum * (mean.detach() - self.running_mean)
             self.running_var += self.momentum * (raw_var - self.running_var)
 
@@ -121,4 +127,11 @@ class BatchRenorm(nn.Module):
             # inference time
             x = (x - self.running_mean.view(view_shape)) / running_std.view(view_shape)
 
-        return x * self.weight.view(view_shape) + self.bias.view(view_shape)
+        out = x * self.weight.view(view_shape) + self.bias.view(view_shape)
+            
+        if torch.isnan(out).any() or torch.isinf(out).any():
+            print("⚠[BatchRenorm] NaN/Inf detectado, clamp aplicado")
+            out = torch.nan_to_num(out, nan=0.0, posinf=1e6, neginf=-1e6)
+
+        return out
+        

@@ -1,7 +1,12 @@
 import torch
 from torch import nn
 from abc import ABC, abstractmethod
-import gym
+try:
+    import gymnasium as gym
+    from gymnasium import Env
+except ImportError:
+    import gym
+    from gym import Env
 from utils.utils import BatchRenorm, SquashedNormal
 from typing import List, Tuple
 import numpy as np
@@ -34,7 +39,7 @@ class CrossQ_SAC_Actor(BaseActor):
     def __init__(self, 
                 state_dim: int,
                 action_dim: int,
-                env: gym.Env,
+                env: Env,
                 hidden_sizes: List[int]=[256, 256],
                 log_std_bounds: List[float] =[-20.0, 2.0]):
         super().__init__()
@@ -56,8 +61,13 @@ class CrossQ_SAC_Actor(BaseActor):
 
         self._initialize_weights()
         # TODO: check this part (single action space is not defined in not vectorized envs)
-        self.register_buffer("action_scale", torch.tensor((np.array([env.params["sv_max"], env.params["v_max"]]) - np.array([env.params["sv_min"], env.params["v_min"]])) / 2.0))
-        self.register_buffer("action_bias", torch.tensor((np.array([env.params["sv_max"], env.params["v_max"]]) + np.array([env.params["sv_min"], env.params["v_min"]])) / 2.0))
+        # Access underlying environment if wrapped
+        underlying_env = env
+        while hasattr(underlying_env, 'env'):
+            underlying_env = underlying_env.env
+            
+        self.register_buffer("action_scale", torch.tensor((np.array([underlying_env.params["sv_max"], underlying_env.params["v_max"]]) - np.array([underlying_env.params["sv_min"], underlying_env.params["v_min"]])) / 2.0))
+        self.register_buffer("action_bias", torch.tensor((np.array([underlying_env.params["sv_max"], underlying_env.params["v_max"]]) + np.array([underlying_env.params["sv_min"], underlying_env.params["v_min"]])) / 2.0))
 
     def _initialize_weights(self):
         for layer in list(self.actor_net) + [self.mean, self.log_std]:
@@ -102,6 +112,7 @@ class CrossQ_SAC_Actor(BaseActor):
     def get_action_alt(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Forward pass
         mean, log_std = self.forward(state)
+
         std = log_std.exp()
         
         dist = SquashedNormal(mean, std)
@@ -122,7 +133,7 @@ class Deterministic_Actor(BaseActor):
     def __init__(self,
                 state_dim: int,
                 action_dim: int,
-                env: gym.Env,
+                env: Env,
                 hidden_sizes: List[int]=[256, 256]):
         super().__init__()
 
@@ -140,8 +151,13 @@ class Deterministic_Actor(BaseActor):
 
         self._initialize_weights()
 
-        self.register_buffer("action_scale", torch.tensor((env.params["sv_max"] - env.params.low) / 2.0))
-        self.register_buffer("action_bias", torch.tensor((env.params["sv_max"] + env.params.low) / 2.0))
+        # Access underlying environment if wrapped
+        underlying_env = env
+        while hasattr(underlying_env, 'env'):
+            underlying_env = underlying_env.env
+            
+        self.register_buffer("action_scale", torch.tensor((underlying_env.params["sv_max"] - underlying_env.params["sv_min"]) / 2.0))
+        self.register_buffer("action_bias", torch.tensor((underlying_env.params["sv_max"] + underlying_env.params["sv_min"]) / 2.0))
 
     def _initialize_weights(self):
         for layer in List(self.actor_net):
