@@ -62,18 +62,18 @@ class RewardCalculator:
         # Default reward configuration
         default_config = {
             'weights': {
-                'progress': 0.4,
+                'progress': 0.4,#subir valor
                 'speed': 0.25,
                 'centerline': 0.15,
                 'smoothness': 0.1,
                 'inactivity': 0.1
             },
             'penalties': {
-                'collision': -100.0,
-                'off_track': -50.0
+                'collision': -50.0,
+                'off_track': -50.0 #no se puede salir
             },
             'parameters': {
-                'target_speed': 8.0,  # m/s
+                'target_speed': 8.0,  # m/s, capaz no es muy buena idea, mejor una funcion sigmoid para impulsar mas velocidad
                 'speed_tolerance': 2.0,
                 'centerline_tolerance': 1.0,  # meters
                 'inactivity_threshold': 0.5,  # m/s minimum speed
@@ -163,7 +163,7 @@ class RewardCalculator:
             return 5.0 * (1.0 - speed_error / speed_tolerance)
         else:
             # Penalize being too far from optimal speed
-            return -2.0 * (speed_error - speed_tolerance)
+            return -2.0 * (speed_error - speed_tolerance) #implementar sigmoid de -3 a 8
     
     def calculate_centerline_penalty(self, position: np.ndarray) -> float:
         """

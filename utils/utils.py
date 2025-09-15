@@ -25,8 +25,8 @@ class SquashedNormal(TransformedDistribution):
     def __init__(self, loc: torch.Tensor, std: torch.Tensor):
         self.loc = loc
         self.std = std
-        #base_distribution = Normal(loc, torch.clamp(std, 1e-4))
-        base_distribution = Normal(loc, std)
+        base_distribution = Normal(loc, torch.clamp(std, 1e-4))
+        #base_distribution = Normal(loc, std)
         super().__init__(base_distribution, StableTanhTransform(), validate_args=False)
 
     @property
