@@ -39,7 +39,7 @@ class TwinQCritic(BaseCritic):
     def _initialize_weights(self):
         for layer in list(self.q1) + list(self.q2):
             if isinstance(layer, nn.Linear):
-                nn.init.orthogonal_(layer.weight)
+                nn.init.xavier_uniform_(layer.weight, gain=0.1)
                 nn.init.zeros_(layer.bias)
 
     def forward(self, state, action):

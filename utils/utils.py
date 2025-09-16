@@ -77,13 +77,19 @@ class BatchRenorm(nn.Module):
         self.register_buffer("running_mean", torch.zeros(num_features))
         self.register_buffer("running_var", torch.ones(num_features))
 
-        self.weight = nn.Parameter(torch.ones(num_features))
+        # Initialize weights with small values to improve stability
+        self.weight = nn.Parameter(torch.ones(num_features) * 0.1)
         self.bias = nn.Parameter(torch.zeros(num_features))
-        self.eps = 1e-5
+        self.eps = 1e-4  # Increased epsilon for better numerical stability
 
     def forward(self, x: torch.Tensor):
         if not x.dim() >= 2:  # first dim is batch size, second dim is num_features
             raise ValueError("expected 2D input (got {}D input)".format(x.dim()))
+
+        # Input sanitization - clean NaN/Inf before processing
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            x = torch.nan_to_num(x, nan=0.0, posinf=10.0, neginf=-10.0)
+            x = torch.clamp(x, -10.0, 10.0)
 
         # prepare dimensions for scaling and shifting parameters
         # suppose we have input of shape (batch_size, num_features, height, width) (e.g. (32, 3, 64, 64))
@@ -91,16 +97,25 @@ class BatchRenorm(nn.Module):
 
         dims = [i for i in range(x.dim()) if i != 1]  # [0, 2, 3]
 
-        running_std = (self.running_var.clamp(min=1e-5) + self.eps).sqrt()
+        running_std = (self.running_var.clamp(min=self.eps) + self.eps).sqrt()
 
         if self.training:
             mean = x.mean(dims)
             var = x.var(dims, unbiased=False)
+            
+            # Ensure var is positive and stable
+            var = torch.clamp(var, min=self.eps)
             std = (var + self.eps).sqrt()
-
-            r = torch.clamp(std / running_std, 1 / self.max_r, self.max_r)
+            
+            # Sanitize computed statistics
+            mean = torch.nan_to_num(mean, nan=0.0)
+            std = torch.nan_to_num(std, nan=1.0)
+            
+            # Compute r and d with improved stability
+            std_ratio = std / (running_std + self.eps)
+            r = torch.clamp(std_ratio, 1 / self.max_r, self.max_r)
             d = torch.clamp(
-                (mean - self.running_mean) / running_std, -self.max_d, self.max_d
+                (mean - self.running_mean) / (running_std + self.eps), -self.max_d, self.max_d
             )
 
             if self.step < self.warmup:
@@ -129,20 +144,19 @@ class BatchRenorm(nn.Module):
 
         out = x * self.weight.view(view_shape) + self.bias.view(view_shape)
         
-        # Handle NaN/Inf values without crashing
+        # Final sanitization
+        out = torch.nan_to_num(out, nan=0.0, posinf=5.0, neginf=-5.0)
+        out = torch.clamp(out, -5.0, 5.0)
+        
+        # Optional: log NaN/Inf occurrences for debugging (less frequent)
         if torch.isnan(out).any() or torch.isinf(out).any():
-            # Only print occasionally to avoid spam (use a simple counter)
             if not hasattr(self, '_nan_count'):
                 self._nan_count = 0
             self._nan_count += 1
             
-            if self._nan_count % 1000 == 1:  # Print first occurrence and every 1000th
+            if self._nan_count % 10000 == 1:  # Print much less frequently
                 print(f"⚠[BatchRenorm] NaN/Inf detectado (occurrence #{self._nan_count})")
-                print(f"  Input stats: mean={x.mean():.4f}, std={x.std():.4f}")
+                print(f"  Input stats: mean={x.mean() if x.numel() > 0 else 'N/A':.4f}")
                 print(f"  Weight stats: mean={self.weight.mean():.4f}, std={self.weight.std():.4f}")
-            
-            # Apply more conservative clamping
-            out = torch.nan_to_num(out, nan=0.0, posinf=10.0, neginf=-10.0)
-            out = torch.clamp(out, -10.0, 10.0)
 
         return out

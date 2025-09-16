@@ -116,7 +116,7 @@ class CrossQ_SAC_Actor(BaseActor):
     def _initialize_weights(self):
         for layer in list(self.actor_net) + [self.mean, self.log_std]:
             if isinstance(layer, nn.Linear):
-                nn.init.orthogonal_(layer.weight)
+                nn.init.xavier_uniform_(layer.weight, gain=0.1)
                 nn.init.zeros_(layer.bias)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -186,31 +186,6 @@ class CrossQ_SAC_Actor(BaseActor):
         return action, log_prob, mean_action
 
 
-    def get_action_alt(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # Forward pass
-        mean, log_std = self.forward(state)
-
-        std = log_std.exp()
-
-        # Check for NaNs in mean or std
-        if torch.isnan(mean).any() or torch.isnan(std).any():
-            # Return zeros or a safe default action/log_prob/mean
-            action = torch.zeros_like(mean)
-            log_prob = torch.zeros((mean.shape[0], 1), device=mean.device)
-            mean_action = torch.zeros_like(mean)
-            return action, log_prob, mean_action
-
-        dist = SquashedNormal(mean, std)
-
-        # Sample and compute log prob
-        sample = dist.rsample()
-        log_prob = dist.log_prob(sample).sum(1, keepdim=True)
-
-        # Scale and shift action
-        action = sample * self.action_scale + self.action_bias
-        mean_action = dist.mean * self.action_scale + self.action_bias
-
-        return action, log_prob, mean_action
 
 
 # sorry gabriel, deleted it on accident

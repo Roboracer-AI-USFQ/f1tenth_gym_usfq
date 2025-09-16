@@ -125,6 +125,32 @@ class CrossQSAC_Agent(Base_Agent):
                     "target_entropy": self.target_entropy,
                 },
             )
+    
+    def _clean_state_data(self, state):
+        """Clean and normalize state data to prevent NaN/Inf propagation"""
+        if len(state) >= 1080:
+            # Split LiDAR and pose data
+            lidar_data = state[:1080]  # First 1080 elements are LiDAR scans
+            pose_data = state[1080:]   # Rest are pose/velocity data
+            
+            # Clean and normalize LiDAR: replace inf/nan with safe values
+            lidar_data = np.nan_to_num(lidar_data, nan=15.0, posinf=30.0, neginf=0.0)
+            lidar_data = np.clip(lidar_data, 0.1, 30.0)  # Avoid exactly 0 which can cause issues
+            # Normalize to [0, 1] range with small offset to avoid 0
+            lidar_data = (lidar_data / 30.0) + 1e-6
+            
+            # Clean pose data with more conservative bounds
+            pose_data = np.nan_to_num(pose_data, nan=0.0, posinf=10.0, neginf=-10.0)
+            pose_data = np.clip(pose_data, -10.0, 10.0)
+            
+            # Reconstruct state
+            cleaned_state = np.concatenate([lidar_data, pose_data])
+        else:
+            # Fallback for unexpected state sizes
+            cleaned_state = np.nan_to_num(state, nan=0.0, posinf=10.0, neginf=-10.0)
+            cleaned_state = np.clip(cleaned_state, -10.0, 10.0)
+            
+        return cleaned_state
 
     # TODO: check if this is necessary
     def select_action(self, states: torch.Tensor, train: bool) -> torch.Tensor:
@@ -168,20 +194,8 @@ class CrossQSAC_Agent(Base_Agent):
                 ]
             )
             
-            # Normalize LiDAR data to prevent NaN/Inf propagation
-            lidar_data = state[:1080]  # First 1080 elements are LiDAR scans
-            pose_data = state[1080:]   # Rest are pose/velocity data
-            
-            # Clean and normalize LiDAR: replace inf/nan with 30m, clip to [0,30], normalize to [0,1]
-            lidar_data = np.nan_to_num(lidar_data, nan=30.0, posinf=30.0, neginf=0.0)
-            lidar_data = np.clip(lidar_data, 0.0, 30.0)
-            lidar_data = lidar_data / 30.0
-            
-            # Clean pose data
-            pose_data = np.nan_to_num(pose_data, nan=0.0)
-            
-            # Reconstruct state
-            state = np.concatenate([lidar_data, pose_data])
+            # Clean and normalize state data to prevent NaN/Inf propagation
+            state = self._clean_state_data(state)
 
             total_ep_reward = 0
             steps = 0
@@ -222,20 +236,8 @@ class CrossQSAC_Agent(Base_Agent):
                     ]
                 )
                 
-                # Normalize LiDAR data in next_state
-                next_lidar_data = next_state[:1080]
-                next_pose_data = next_state[1080:]
-                
-                # Clean and normalize LiDAR
-                next_lidar_data = np.nan_to_num(next_lidar_data, nan=30.0, posinf=30.0, neginf=0.0)
-                next_lidar_data = np.clip(next_lidar_data, 0.0, 30.0)
-                next_lidar_data = next_lidar_data / 30.0
-                
-                # Clean pose data
-                next_pose_data = np.nan_to_num(next_pose_data, nan=0.0)
-                
-                # Reconstruct next_state
-                next_state = np.concatenate([next_lidar_data, next_pose_data])
+                # Clean and normalize next_state data
+                next_state = self._clean_state_data(next_state)
                 self.replay_buffer.add(
                     state, action, reward, next_state, terminated, truncated
                 )
@@ -321,10 +323,15 @@ class CrossQSAC_Agent(Base_Agent):
                     + self.gamma * (1 - terminations.unsqueeze(-1)) * target_q_values
                 ).detach()
 
-                # Sanitize Q values and targets to prevent NaN
-                q_values_1 = torch.nan_to_num(q_values_1, nan=0.0, posinf=100.0, neginf=-100.0)
-                q_values_2 = torch.nan_to_num(q_values_2, nan=0.0, posinf=100.0, neginf=-100.0)
-                q_target = torch.nan_to_num(q_target, nan=0.0, posinf=100.0, neginf=-100.0)
+                # Sanitize Q values and targets to prevent NaN (more conservative bounds)
+                q_values_1 = torch.nan_to_num(q_values_1, nan=0.0, posinf=50.0, neginf=-50.0)
+                q_values_2 = torch.nan_to_num(q_values_2, nan=0.0, posinf=50.0, neginf=-50.0)
+                q_target = torch.nan_to_num(q_target, nan=0.0, posinf=50.0, neginf=-50.0)
+                
+                # Additional clamping for stability
+                q_values_1 = torch.clamp(q_values_1, -50.0, 50.0)
+                q_values_2 = torch.clamp(q_values_2, -50.0, 50.0)
+                q_target = torch.clamp(q_target, -50.0, 50.0)
 
                 q1_loss = F.mse_loss(q_values_1, q_target)
                 q2_loss = F.mse_loss(q_values_2, q_target)
@@ -336,16 +343,16 @@ class CrossQSAC_Agent(Base_Agent):
                     print(f"Target Q: mean={q_target.mean():.4f}")
                     continue
                 
-                # Clamp losses to prevent explosion
-                q1_loss = torch.clamp(q1_loss, -100, 100)
-                q2_loss = torch.clamp(q2_loss, -100, 100)
+                # Clamp losses to prevent explosion (more conservative)
+                q1_loss = torch.clamp(q1_loss, 0.0, 50.0)
+                q2_loss = torch.clamp(q2_loss, 0.0, 50.0)
                 
                 total_q_loss = q1_loss + q2_loss
 
                 self.critic_net_optimizer.zero_grad()
                 #print("Q1 Loss:", q1_loss.item(), "Q2 Loss:", q2_loss.item())
                 total_q_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=10.0)
+                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=5.0)
                 self.critic_net_optimizer.step()
                 # log actor loss, critic loss, entropy loss, alpha
 
@@ -388,9 +395,14 @@ class CrossQSAC_Agent(Base_Agent):
                     policy_loss = (self.log_alpha.exp() * log_probs - min_q).mean()
 
                     self.actor_net_optimizer.zero_grad()
+                    # Check for NaN policy loss
+                    if torch.isnan(policy_loss):
+                        print("⚠ NaN detected in policy loss, skipping actor update")
+                        continue
+                        
                     policy_loss.backward()
                     torch.nn.utils.clip_grad_norm_(
-                    self.actor.parameters(), max_norm=1.0
+                        self.actor.parameters(), max_norm=1.0
                     )
                     self.actor_net_optimizer.step()
 

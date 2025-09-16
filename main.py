@@ -27,7 +27,7 @@ if "__main__" == __name__:
                    integrator=Integrator.RK4,
                    reward_config='./config/reward_config.yaml',
                    waypoints_path='./examples/example_waypoints.csv')
-    agent = CrossQSAC_Agent(env, replay_buffer=replay_buffer, use_wandb=True, state_dim=1086, action_dim=2)
+    agent = CrossQSAC_Agent(env, replay_buffer=replay_buffer, use_wandb=False, state_dim=1086, action_dim=2)
     batch_size = 256
     rollout_eps = 1
     total_steps = 20000
