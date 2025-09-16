@@ -9,6 +9,7 @@ from algos.agent_utils import Base_Agent
 from utils.buffers import SimpleBuffer
 from typing import List
 import copy
+
 try:
     import gymnasium as gym
     from gymnasium import Env
@@ -77,9 +78,11 @@ class CrossQSAC_Agent(Base_Agent):
         # params
         # Access underlying environment if wrapped
         underlying_env = env
-        while hasattr(underlying_env, 'env'):
+        while hasattr(underlying_env, "env"):
             underlying_env = underlying_env.env
-        self.max_action = np.array([underlying_env.params["sv_max"], underlying_env.params["v_max"]])
+        self.max_action = np.array(
+            [underlying_env.params["sv_max"], underlying_env.params["v_max"]]
+        )
         self.gamma = gamma
         self.rewards_scale = 1.0
         self.policy_update_freq = policy_freq
@@ -153,15 +156,32 @@ class CrossQSAC_Agent(Base_Agent):
             terminated = False
             truncated = False
 
-            state = np.concatenate([
-                state['scans'][0].flatten(),
-                np.array(state['poses_x']),
-                np.array(state['poses_y']),
-                np.array(state['poses_theta']),
-                np.array(state['linear_vels_x']),
-                np.array(state['linear_vels_y']),
-                np.array(state['ang_vels_z'])
-            ])
+            state = np.concatenate(
+                [
+                    state["scans"][0].flatten(),
+                    np.array(state["poses_x"]),
+                    np.array(state["poses_y"]),
+                    np.array(state["poses_theta"]),
+                    np.array(state["linear_vels_x"]),
+                    np.array(state["linear_vels_y"]),
+                    np.array(state["ang_vels_z"]),
+                ]
+            )
+            
+            # Normalize LiDAR data to prevent NaN/Inf propagation
+            lidar_data = state[:1080]  # First 1080 elements are LiDAR scans
+            pose_data = state[1080:]   # Rest are pose/velocity data
+            
+            # Clean and normalize LiDAR: replace inf/nan with 30m, clip to [0,30], normalize to [0,1]
+            lidar_data = np.nan_to_num(lidar_data, nan=30.0, posinf=30.0, neginf=0.0)
+            lidar_data = np.clip(lidar_data, 0.0, 30.0)
+            lidar_data = lidar_data / 30.0
+            
+            # Clean pose data
+            pose_data = np.nan_to_num(pose_data, nan=0.0)
+            
+            # Reconstruct state
+            state = np.concatenate([lidar_data, pose_data])
 
             total_ep_reward = 0
             steps = 0
@@ -174,29 +194,48 @@ class CrossQSAC_Agent(Base_Agent):
                 next_state, reward, terminated, truncated, infos = self.env.step(
                     np.array([action])
                 )
-                
-                # Log reward components if available
-                if self.use_wandb and 'reward_components' in infos:
-                    reward_components = infos['reward_components']
-                    wandb.log({
-                        "reward/total": reward_components.get('total', reward),
-                        "reward/progress": reward_components.get('progress', 0),
-                        "reward/speed": reward_components.get('speed', 0),
-                        "reward/centerline": reward_components.get('centerline', 0),
-                        "reward/smoothness": reward_components.get('smoothness', 0),
-                        "reward/inactivity": reward_components.get('inactivity', 0),
-                        "reward/collision": reward_components.get('collision', 0)
-                    })
 
-                next_state = np.concatenate([
-                    next_state['scans'][0].flatten(),
-                    np.array(next_state['poses_x']),
-                    np.array(next_state['poses_y']),
-                    np.array(next_state['poses_theta']),
-                    np.array(next_state['linear_vels_x']),
-                    np.array(next_state['linear_vels_y']),
-                    np.array(next_state['ang_vels_z'])
-                ])
+                # Log reward components if available
+                if self.use_wandb and "reward_components" in infos:
+                    reward_components = infos["reward_components"]
+                    wandb.log(
+                        {
+                            "reward/total": reward_components.get("total", reward),
+                            "reward/progress": reward_components.get("progress", 0),
+                            "reward/speed": reward_components.get("speed", 0),
+                            "reward/centerline": reward_components.get("centerline", 0),
+                            "reward/smoothness": reward_components.get("smoothness", 0),
+                            "reward/inactivity": reward_components.get("inactivity", 0),
+                            "reward/collision": reward_components.get("collision", 0),
+                        }
+                    )
+
+                next_state = np.concatenate(
+                    [
+                        next_state["scans"][0].flatten(),
+                        np.array(next_state["poses_x"]),
+                        np.array(next_state["poses_y"]),
+                        np.array(next_state["poses_theta"]),
+                        np.array(next_state["linear_vels_x"]),
+                        np.array(next_state["linear_vels_y"]),
+                        np.array(next_state["ang_vels_z"]),
+                    ]
+                )
+                
+                # Normalize LiDAR data in next_state
+                next_lidar_data = next_state[:1080]
+                next_pose_data = next_state[1080:]
+                
+                # Clean and normalize LiDAR
+                next_lidar_data = np.nan_to_num(next_lidar_data, nan=30.0, posinf=30.0, neginf=0.0)
+                next_lidar_data = np.clip(next_lidar_data, 0.0, 30.0)
+                next_lidar_data = next_lidar_data / 30.0
+                
+                # Clean pose data
+                next_pose_data = np.nan_to_num(next_pose_data, nan=0.0)
+                
+                # Reconstruct next_state
+                next_state = np.concatenate([next_lidar_data, next_pose_data])
                 self.replay_buffer.add(
                     state, action, reward, next_state, terminated, truncated
                 )
@@ -204,7 +243,9 @@ class CrossQSAC_Agent(Base_Agent):
                 steps += 1
                 total_ep_reward += reward
 
-            print(f"Episode finished in {steps} steps with Average Reward = {total_ep_reward:.2f}")
+            print(
+                f"Episode finished in {steps} steps with Average Reward = {total_ep_reward:.2f}"
+            )
             if self.use_wandb:
                 wandb.log(
                     {
@@ -222,10 +263,13 @@ class CrossQSAC_Agent(Base_Agent):
         """
 
         for global_step in range(total_steps):
-            
+
             if global_step % 1000 == 0:
-                print(f"[train] global_step={global_step}, replay_size={len(self.replay_buffer)}", flush=True)
-            
+                print(
+                    f"[train] global_step={global_step}, replay_size={len(self.replay_buffer)}",
+                    flush=True,
+                )
+
             if self.use_wandb:
                 wandb.log({"Replay_buffer_lenght": len(self.replay_buffer)})
 
@@ -260,7 +304,7 @@ class CrossQSAC_Agent(Base_Agent):
 
                 q_values_1, q_values_1_next = torch.chunk(cat_q1, chunks=2, dim=0)
                 q_values_2, q_values_2_next = torch.chunk(cat_q2, chunks=2, dim=0)
-                
+
                 # print(q_values_1.detach().mean())
                 # print(q_values_2)
 
@@ -277,13 +321,31 @@ class CrossQSAC_Agent(Base_Agent):
                     + self.gamma * (1 - terminations.unsqueeze(-1)) * target_q_values
                 ).detach()
 
+                # Sanitize Q values and targets to prevent NaN
+                q_values_1 = torch.nan_to_num(q_values_1, nan=0.0, posinf=100.0, neginf=-100.0)
+                q_values_2 = torch.nan_to_num(q_values_2, nan=0.0, posinf=100.0, neginf=-100.0)
+                q_target = torch.nan_to_num(q_target, nan=0.0, posinf=100.0, neginf=-100.0)
+
                 q1_loss = F.mse_loss(q_values_1, q_target)
                 q2_loss = F.mse_loss(q_values_2, q_target)
+                
+                # Check for NaN losses and skip update if detected
+                if torch.isnan(q1_loss) or torch.isnan(q2_loss):
+                    print("⚠ NaN detected in Q losses, skipping update")
+                    print(f"Q1 values: mean={q_values_1.mean():.4f}, Q2 values: mean={q_values_2.mean():.4f}")
+                    print(f"Target Q: mean={q_target.mean():.4f}")
+                    continue
+                
+                # Clamp losses to prevent explosion
+                q1_loss = torch.clamp(q1_loss, -100, 100)
+                q2_loss = torch.clamp(q2_loss, -100, 100)
+                
                 total_q_loss = q1_loss + q2_loss
 
                 self.critic_net_optimizer.zero_grad()
+                #print("Q1 Loss:", q1_loss.item(), "Q2 Loss:", q2_loss.item())
                 total_q_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=100.0)
+                torch.nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=10.0)
                 self.critic_net_optimizer.step()
                 # log actor loss, critic loss, entropy loss, alpha
 
@@ -328,7 +390,7 @@ class CrossQSAC_Agent(Base_Agent):
                     self.actor_net_optimizer.zero_grad()
                     policy_loss.backward()
                     # torch.nn.utils.clip_grad_norm_(
-                        # self.actor.parameters(), max_norm=1.0
+                    # self.actor.parameters(), max_norm=1.0
                     # )
                     self.actor_net_optimizer.step()
 
@@ -442,7 +504,7 @@ class CrossQTD3_Agent(Base_Agent):
         # define parameters
         # Access underlying environment if wrapped
         underlying_env = env
-        while hasattr(underlying_env, 'env'):
+        while hasattr(underlying_env, "env"):
             underlying_env = underlying_env.env
         self.max_action = underlying_env.action_space.high
         self.gamma = gamma

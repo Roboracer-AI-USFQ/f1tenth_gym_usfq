@@ -14,7 +14,7 @@ class StableTanhTransform(TanhTransform):
 
     def _inverse(self, x):
         # evitar log(0) cuando x ~ ±1
-        x = torch.clamp(x, -1 + 1e-6, 1 - 1e-6)
+        x = torch.clamp(x, -1 + 1e-5, 1 - 1e-5)
         return self.atanh(x)
 
     def __eq__(self, other):
@@ -91,7 +91,7 @@ class BatchRenorm(nn.Module):
 
         dims = [i for i in range(x.dim()) if i != 1]  # [0, 2, 3]
 
-        running_std = (self.running_var.clamp(min=1e-6) + self.eps).sqrt()
+        running_std = (self.running_var.clamp(min=1e-5) + self.eps).sqrt()
 
         if self.training:
             mean = x.mean(dims)
@@ -128,10 +128,21 @@ class BatchRenorm(nn.Module):
             x = (x - self.running_mean.view(view_shape)) / running_std.view(view_shape)
 
         out = x * self.weight.view(view_shape) + self.bias.view(view_shape)
-            
+        
+        # Handle NaN/Inf values without crashing
         if torch.isnan(out).any() or torch.isinf(out).any():
-            print("⚠[BatchRenorm] NaN/Inf detectado, clamp aplicado")
-            out = torch.nan_to_num(out, nan=0.0, posinf=1e6, neginf=-1e6)
+            # Only print occasionally to avoid spam (use a simple counter)
+            if not hasattr(self, '_nan_count'):
+                self._nan_count = 0
+            self._nan_count += 1
+            
+            if self._nan_count % 1000 == 1:  # Print first occurrence and every 1000th
+                print(f"⚠[BatchRenorm] NaN/Inf detectado (occurrence #{self._nan_count})")
+                print(f"  Input stats: mean={x.mean():.4f}, std={x.std():.4f}")
+                print(f"  Weight stats: mean={self.weight.mean():.4f}, std={self.weight.std():.4f}")
+            
+            # Apply more conservative clamping
+            out = torch.nan_to_num(out, nan=0.0, posinf=10.0, neginf=-10.0)
+            out = torch.clamp(out, -10.0, 10.0)
 
         return out
-        
