@@ -1,7 +1,7 @@
 import time
 from f110_gym.envs.base_classes import Integrator
 import yaml
-import gym
+import gymnasium as gym
 import numpy as np
 from argparse import Namespace
 
@@ -270,18 +270,29 @@ def main():
         planner.render_waypoints(env_renderer)
 
     env = gym.make('f110_gym:f110-v0', map=conf.map_path, map_ext=conf.map_ext, num_agents=1, timestep=0.01, integrator=Integrator.RK4)
-    env.add_render_callback(render_callback)
     
-    obs, step_reward, done, info = env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
+    # Access the underlying F110Env if wrapped
+    base_env = env
+    while hasattr(base_env, 'env'):
+        base_env = base_env.env
+    
+    base_env.add_render_callback(render_callback)
+    
+    obs, info = env.reset()
+    # Set custom initial pose
+    base_env.reset(np.array([[conf.sx, conf.sy, conf.stheta]]))
+    obs, step_reward, done, truncated, info = env.step(np.array([[0.0, 0.0]]))  # Get updated obs
     env.render()
 
     laptime = 0.0
     start = time.time()
+    done = False
+    truncated = False
 
-    while not done:
+    while not done and not truncated:
         speed, steer = planner.plan(obs['poses_x'][0], obs['poses_y'][0], obs['poses_theta'][0], work['tlad'], work['vgain'])
         print(steer, speed)
-        obs, step_reward, done, info = env.step(np.array([[steer, speed]]))
+        obs, step_reward, done, truncated, info = env.step(np.array([[steer, speed]]))
         # print(obs)
         state = np.concatenate([
             obs['scans'][0].flatten(),
@@ -294,7 +305,7 @@ def main():
         ])
         # print('State:', state.shape)
         laptime += step_reward
-        env.render(mode='human')
+        env.render()
 
         
         
