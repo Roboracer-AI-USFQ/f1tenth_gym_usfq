@@ -357,11 +357,17 @@ class F110Env(gym.Env):
         
         # Calculate reward using advanced system or fallback to simple
         if self.use_advanced_rewards and self.reward_calculator is not None:
-            reward, reward_components = self.reward_calculator.calculate_total_reward(
-                obs, action[0], done, info
-            )
-            # Add reward components to info for logging
-            info['reward_components'] = reward_components
+            try:
+                reward, reward_components = self.reward_calculator.calculate_total_reward(
+                    obs, action[0], done, info
+                )
+                # Add reward components to info for logging
+                info['reward_components'] = reward_components
+            except Exception as e:
+                print(f"Reward calculation failed: {e}")
+                reward = -10.0  # Large penalty
+                terminated = True
+                info['reward_components'] = {'total': reward, 'error': str(e)}
         else:
             # Fallback to simple timestep reward
             reward = self.timestep

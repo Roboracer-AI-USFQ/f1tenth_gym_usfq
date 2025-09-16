@@ -389,9 +389,9 @@ class CrossQSAC_Agent(Base_Agent):
 
                     self.actor_net_optimizer.zero_grad()
                     policy_loss.backward()
-                    # torch.nn.utils.clip_grad_norm_(
-                    # self.actor.parameters(), max_norm=1.0
-                    # )
+                    torch.nn.utils.clip_grad_norm_(
+                    self.actor.parameters(), max_norm=1.0
+                    )
                     self.actor_net_optimizer.step()
 
                     # temperature update

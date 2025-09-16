@@ -186,6 +186,33 @@ class CrossQ_SAC_Actor(BaseActor):
         return action, log_prob, mean_action
 
 
+    def get_action_alt(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Forward pass
+        mean, log_std = self.forward(state)
+
+        std = log_std.exp()
+
+        # Check for NaNs in mean or std
+        if torch.isnan(mean).any() or torch.isnan(std).any():
+            # Return zeros or a safe default action/log_prob/mean
+            action = torch.zeros_like(mean)
+            log_prob = torch.zeros((mean.shape[0], 1), device=mean.device)
+            mean_action = torch.zeros_like(mean)
+            return action, log_prob, mean_action
+
+        dist = SquashedNormal(mean, std)
+
+        # Sample and compute log prob
+        sample = dist.rsample()
+        log_prob = dist.log_prob(sample).sum(1, keepdim=True)
+
+        # Scale and shift action
+        action = sample * self.action_scale + self.action_bias
+        mean_action = dist.mean * self.action_scale + self.action_bias
+
+        return action, log_prob, mean_action
+
+
 # sorry gabriel, deleted it on accident
 class Deterministic_Actor(BaseActor):
     def __init__(
