@@ -10,3 +10,4 @@ docs/_build/
 *.mypy_cache/
 flycheck_*
 gym_env/
+wandb/
